@@ -1,48 +1,43 @@
-import asyncio
-import websockets
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+import uvicorn
 import os
-from http import HTTPStatus
+
+app = FastAPI(title="Meowl Notifier")
 
 connected_clients = set()
 
-# Simple HTTP response for Render health checks and browser visits
-async def http_handler(path, headers):
-    if path in ("/", "/health"):
-        return HTTPStatus.OK, [], b"Meowl Notifier is running! 🦉\n"
-    return None  # Let WebSocket handler handle other paths
+@app.get("/")
+async def home():
+    return HTMLResponse("""
+        <h1>🦉 Meowl Notifier is running!</h1>
+        <p>Connect to WebSocket at: <code>wss://meowl-notifier.onrender.com/ws</code></p>
+    """)
 
-async def ws_handler(websocket, path):
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
     connected_clients.add(websocket)
     print(f"✅ New client connected! Total: {len(connected_clients)}")
     
     try:
-        async for message in websocket:
+        while True:
+            message = await websocket.receive_text()
             print(f"📨 Broadcast: {message}")
-            for client in connected_clients.copy():
-                if client.open:
+            
+            # Broadcast to all clients
+            for client in list(connected_clients):
+                if client.client_state.CONNECTED:
                     try:
-                        await client.send(f"🦉 Meowl Notifier: {message}")
+                        await client.send_text(f"🦉 Meowl Notifier: {message}")
                     except:
-                        pass
-    except:
+                        connected_clients.discard(client)
+    except WebSocketDisconnect:
         pass
     finally:
         connected_clients.discard(websocket)
         print(f"❌ Client disconnected. Remaining: {len(connected_clients)}")
 
-async def main():
-    port = int(os.environ.get("PORT", 8765))
-    
-    async with websockets.serve(
-        ws_handler,
-        "0.0.0.0",
-        port,
-        process_request=http_handler,
-        ping_interval=20,      # Helps keep connections alive
-        ping_timeout=30
-    ):
-        print("🚀 Meowl Notifier Broadcast Server is running (with health check fix)!")
-        await asyncio.Future()
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.getenv("PORT", 8765))
+    uvicorn.run(app, host="0.0.0.0", port=port)
