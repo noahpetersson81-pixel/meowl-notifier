@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import uvicorn
 import os
+import json
 
 app = FastAPI(title="Meowl Notifier")
 
@@ -9,10 +10,28 @@ connected_clients = set()
 
 @app.get("/")
 async def home():
-    return HTMLResponse("""
-        <h1>🦉 Meowl Notifier is running!</h1>
-        <p>Connect to WebSocket at: <code>wss://meowl-notifier.onrender.com/ws</code></p>
-    """)
+    return HTMLResponse("<h1>🦉 Meowl Notifier is running!</h1><p>WebSocket at: /ws</p>")
+
+@app.post("/send")
+async def receive_from_roblox(data: dict):
+    """Receive data from Roblox scanner and broadcast it"""
+    message = json.dumps({
+        "type": "brainrot_found",
+        "data": data,
+        "timestamp": os.time()
+    })
+    
+    print(f"📨 Received from Roblox: {len(data.get('brainrots', []))} brainrots")
+    
+    # Broadcast to all WebSocket clients
+    for client in list(connected_clients):
+        if client.client_state.CONNECTED:
+            try:
+                await client.send_text(message)
+            except:
+                connected_clients.discard(client)
+    
+    return {"status": "sent", "clients": len(connected_clients)}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -22,16 +41,8 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         while True:
-            message = await websocket.receive_text()
-            print(f"📨 Broadcast: {message}")
-            
-            # Broadcast to all clients
-            for client in list(connected_clients):
-                if client.client_state.CONNECTED:
-                    try:
-                        await client.send_text(f"🦉 Meowl Notifier: {message}")
-                    except:
-                        connected_clients.discard(client)
+            data = await websocket.receive_text()  # optional: receive from clients
+            print(f"From client: {data}")
     except WebSocketDisconnect:
         pass
     finally:
